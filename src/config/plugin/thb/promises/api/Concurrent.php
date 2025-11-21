@@ -31,7 +31,7 @@ class Concurrent
                     'class' => $class,
                     'method' => $method,
                     'args' => $args,
-                    'sign' => strtoupper(md5($class . $method . env('AUTH_KEY', 'abc123'))),
+                    'sign' => strtoupper(md5($class . $method . config('plugin.thb.promises.app.secret'))),
                 ]
             ];
         }

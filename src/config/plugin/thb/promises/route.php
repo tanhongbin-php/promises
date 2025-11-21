@@ -20,15 +20,15 @@ use Webman\Route;
  */
 Route::get(config('plugin.thb.promises.app.api'), function(Request $request){
     $class = $request->get('class', '');
-    if(strlen($class) == 0){
+    if(strlen($class) == 0 || class_exists($class)){
         return response('forbidden', 403);
     }
     $method = $request->get('method', '');
-    if(strlen($method) == 0){
+    if(strlen($method) == 0 || method_exists($class, $method)){
         return response('forbidden', 403);
     }
     $args = $request->get('args', []);
-    if(strtoupper(md5($class . $method . env('AUTH_KEY', 'abc123'))) !== $request->get('sign', '')){
+    if(strtoupper(md5($class . $method . config('plugin.thb.promises.app.secret'))) !== $request->get('sign', '')){
         return response('forbidden', 403);
     }
     $class = \support\Container::get($class);
