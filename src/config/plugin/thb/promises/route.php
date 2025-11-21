@@ -20,11 +20,11 @@ use Webman\Route;
  */
 Route::get(config('plugin.thb.promises.app.api'), function(Request $request){
     $class = $request->get('class', '');
-    if(strlen($class) == 0 || class_exists($class)){
+    if(strlen($class) == 0 || !class_exists($class)){
         return response('forbidden', 403);
     }
     $method = $request->get('method', '');
-    if(strlen($method) == 0 || method_exists($class, $method)){
+    if(strlen($method) == 0 || !method_exists($class, $method)){
         return response('forbidden', 403);
     }
     $args = $request->get('args', []);
