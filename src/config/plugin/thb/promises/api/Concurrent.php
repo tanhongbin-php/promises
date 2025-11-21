@@ -55,7 +55,7 @@ class Concurrent
                 $requestOptions['query'] = $fromData;
                 $promises[$key] = $client->requestAsync('GET', $url, $requestOptions)->then(
                     function ($response) use ($key, &$responses) {
-                        $responses[$key] = json_decode($response->getBody()->getContents());
+                        $responses[$key] = $responses[$key] = json_decode($response->getBody()->getContents(), true);
                     }, function ($response) use ($key, &$responses) {
                         $responses[$key] = null;
                     }
