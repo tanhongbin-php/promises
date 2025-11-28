@@ -18,11 +18,12 @@ class Concurrent
      * [$this, 'indexs', ['a', 1]]
      * ];
      */
-    static function promises(array $promises = [], int $maxConcurrency = 10): array
+    static function promises(array $promises = [], int $maxConcurrency = 8): array
     {
         static $client;
-        // 验证最大并发数（至少1个，最多不超过请求总数）
-        $maxConcurrency = config('plugin.thb.promises.app.count', 8);
+        $caller = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2);
+        $proClass = $caller[1]['class'] ?? '';
+        $proFunction = $caller[1]['function'] ?? '';
         $data = [];
         $i = 0;
         foreach ($promises as $key => $val) {
@@ -31,6 +32,9 @@ class Concurrent
             }
             [$class, $method, $args] = array_pad($val, 3, []);
             $className = is_object($class) ? get_class($class) : $class; // 兼容类名/实例
+            if($proClass === $className && $proFunction === $method){
+                throw new BusinessException('promises不支持自身调用自身', 500);
+            }
             $asyncHttp = 'asyncHttp' . $i%$maxConcurrency;
             $data[$key] = [
                 'url' => config('plugin.thb.promises.process.' . $asyncHttp . '.listen') . config('plugin.thb.promises.app.api'),

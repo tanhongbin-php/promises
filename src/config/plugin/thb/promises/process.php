@@ -14,7 +14,6 @@ for ($i = 0; $i < config('plugin.thb.promises.app.count', 8); $i++)
         'user' => '',
         'group' => '',
         'reusePort' => true,
-        'reloadable' => false,
         'eventLoop' => '', //Workerman\Events\Fiber::class
         'context' => [],
         'constructor' => [
