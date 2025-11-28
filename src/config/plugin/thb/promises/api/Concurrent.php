@@ -27,7 +27,7 @@ class Concurrent
         $data = [];
         $i = 0;
         foreach ($promises as $key => $val) {
-            if (count($val) < 2) {
+            if (!is_array($val) || count($val) < 2) {
                 throw new BusinessException('promises参数格式错误', 500);
             }
             [$class, $method, $args] = array_pad($val, 3, []);

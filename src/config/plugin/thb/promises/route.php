@@ -20,14 +20,17 @@ use Webman\Route;
  */
 Route::post(config('plugin.thb.promises.app.api'), function(Request $request){
     $class = $request->input('class', '');
-    if(strlen($class) == 0 || !class_exists($class)){
+    if(!is_string($class) || strlen($class) == 0 || !class_exists($class)){
         return response('forbidden', 403);
     }
     $method = $request->input('method', '');
-    if(strlen($method) == 0 || !method_exists($class, $method)){
+    if(!is_string($method) || strlen($method) == 0 || !method_exists($class, $method)){
         return response('forbidden', 403);
     }
     $args = $request->input('args', []);
+    if(!is_array($args)){
+        $args = [$args];
+    }
     if(strtoupper(md5($class . $method . config('plugin.thb.promises.app.secret'))) !== $request->input('sign', '')){
         return response('forbidden', 403);
     }
