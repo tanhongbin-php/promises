@@ -18,17 +18,17 @@ use Webman\Route;
 /**
  * 内部并发处理任务的api接口地址
  */
-Route::get(config('plugin.thb.promises.app.api'), function(Request $request){
-    $class = $request->get('class', '');
+Route::post(config('plugin.thb.promises.app.api'), function(Request $request){
+    $class = $request->input('class', '');
     if(strlen($class) == 0 || !class_exists($class)){
         return response('forbidden', 403);
     }
-    $method = $request->get('method', '');
+    $method = $request->input('method', '');
     if(strlen($method) == 0 || !method_exists($class, $method)){
         return response('forbidden', 403);
     }
-    $args = $request->get('args', []);
-    if(strtoupper(md5($class . $method . config('plugin.thb.promises.app.secret'))) !== $request->get('sign', '')){
+    $args = $request->input('args', []);
+    if(strtoupper(md5($class . $method . config('plugin.thb.promises.app.secret'))) !== $request->input('sign', '')){
         return response('forbidden', 403);
     }
     $class = \support\Container::get($class);

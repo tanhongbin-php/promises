@@ -4,14 +4,17 @@ use app\process\Http;
 use support\Log;
 use support\Request;
 
-return [
-    'asyncHttp' => [
+$arr = [];
+for ($i = 0; $i < config('plugin.thb.promises.app.count', 8); $i++)
+{
+    $arr['asyncHttp' . $i] = [
         'handler' => Http::class,
-        'listen' => 'http://127.0.0.1:8686',
-        'count' => cpu_count() * 2,
+        'listen' => 'http://127.0.0.1:' . (config('plugin.thb.promises.app.port', 8600) + $i),
+        'count' => 1,
         'user' => '',
         'group' => '',
         'reusePort' => true,
+        'reloadable' => false,
         'eventLoop' => '', //Workerman\Events\Fiber::class
         'context' => [],
         'constructor' => [
@@ -20,5 +23,6 @@ return [
             'appPath' => app_path(),
             'publicPath' => public_path()
         ]
-    ],
-];
+    ];
+}
+return $arr;
