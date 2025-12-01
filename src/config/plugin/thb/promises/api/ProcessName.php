@@ -1,6 +1,6 @@
 <?php
 
-namespace Thb\Promises\config\plugin\thb\promises\api;
+namespace config\plugin\thb\promises\api;
 
 use Webman\Bootstrap;
 
