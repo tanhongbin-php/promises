@@ -21,6 +21,9 @@ class Concurrent
     static function promises(array $promises = [], int $maxConcurrency = 8): array
     {
         static $client;
+        if(strlen(ProcessName::$name)){
+            throw new BusinessException('不能在异步进程内再次使用异步方法', 500);
+        }
         $caller = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2);
         $proClass = $caller[1]['class'] ?? '';
         $proFunction = $caller[1]['function'] ?? '';
