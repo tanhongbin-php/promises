@@ -7,6 +7,9 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Promise\FulfilledPromise; // Guzzle 7 原生类
 use GuzzleHttp\Promise\Utils;
 use support\exception\BusinessException;
+use GuzzleHttp\Handler\CurlMultiHandler;
+use GuzzleHttp\Handler\CurlFactory;
+use GuzzleHttp\HandlerStack;
 
 class Concurrent
 {
@@ -20,15 +23,15 @@ class Concurrent
      */
     static function promises(array $promises = [], int $maxConcurrency = 8): array
     {
-        static $client;
+        static $i = 0;
         if(strlen(ProcessName::$name)){
             throw new BusinessException('不能在异步进程内再次使用异步方法', 500);
         }
         $caller = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2);
         $proClass = $caller[1]['class'] ?? '';
         $proFunction = $caller[1]['function'] ?? '';
+        $asyncHttpNum = config('plugin.thb.promises.app.count', 1);
         $data = [];
-        $i = 0;
         foreach ($promises as $key => $val) {
             if (!is_array($val) || count($val) < 2) {
                 throw new BusinessException('promises参数格式错误', 500);
@@ -38,7 +41,7 @@ class Concurrent
             if($proClass === $className && $proFunction === $method){
                 throw new BusinessException('promises不支持自身调用自身', 500);
             }
-            $asyncHttp = 'asyncHttp' . $i%$maxConcurrency;
+            $asyncHttp = 'asyncHttp' . $i%$asyncHttpNum;
             $data[$key] = [
                 'url' => config('plugin.thb.promises.process.' . $asyncHttp . '.listen') . config('plugin.thb.promises.app.api'),
                 'data' => [
@@ -50,15 +53,21 @@ class Concurrent
             ];
             $i++;
         }
+        if($i > $asyncHttpNum * 100){
+            $i = 0;
+        }
         // 验证最大并发数（至少1个，最多不超过请求总数）
         $totalRequests = count($data);
-        if(!$client){
-            $client = new Client([
-                'handler' => \GuzzleHttp\HandlerStack::create(new \GuzzleHttp\Handler\CurlMultiHandler([
-                    'max_concurrency' => $maxConcurrency, // 连接池最大并发数，与业务并发数一致
-                ])),
-            ]);
-        }
+        // 每次调用创建独立的 Client/Handler，避免长生命周期句柄积累
+        $multiHandler = new CurlMultiHandler([
+            // 限制内部可复用句柄上限，避免池无限增长
+            'handle_factory' => new CurlFactory(5),
+            'select_timeout' => 0.05,
+        ]);
+        $handlerStack = HandlerStack::create($multiHandler);
+        $client = new Client([
+            'handler' => $handlerStack,
+        ]);
 
         $responses = [];
 
@@ -89,6 +98,12 @@ class Concurrent
                 'timeout' => $fromData['timeout'] ?? 15,
                 'verify' => $fromData['verify'] ?? false,
                 'json' => $fromData,
+                // 降低连接复用，避免长连接在高频场景中积累资源（如需性能可按需关闭）
+                'headers' => ['Connection' => 'close'],
+                'curl' => [
+                    \CURLOPT_FORBID_REUSE => true,
+                    \CURLOPT_FRESH_CONNECT => true,
+                ],
             ];
             // 发起异步GET请求
             return $client->requestAsync('POST', $config['url'], $requestOptions)
@@ -117,7 +132,7 @@ class Concurrent
         // 3. 初始化：启动 maxConcurrency 个并发请求（核心并发控制）
         $runningPromises = [];
         $maxConcurrency = min($totalRequests, $maxConcurrency);
-        for ($i = 0; $i < $maxConcurrency; $i++) {
+        for ($k = 0; $k < $maxConcurrency; $k++) {
             $runningPromises[] = $execute();
         }
 
@@ -126,6 +141,14 @@ class Concurrent
 
         // 确保返回结果的键与输入顺序一致（可选，按原key排序）
         ksort($responses);
+        // 显式释放大对象，减少长期驻留内存
+        unset($queue, $runningPromises, $execute, $data);
+        $client = null;
+        $handlerStack = null;
+        $multiHandler = null;
+        if (function_exists('gc_collect_cycles')) {
+            gc_collect_cycles();
+        }
         return $responses;
     }
 }

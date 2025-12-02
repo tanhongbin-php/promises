@@ -2,7 +2,7 @@
 return [
     'enable' => true,
     'name' => 'asyncHttp',
-    'count' => cpu_count() * 2,
+    'count' => DIRECTORY_SEPARATOR === '/' ? cpu_count() * 2 : 8,
     'port' => 8600,
     'api' => '/promise',
     'secret' => 'abc123'
