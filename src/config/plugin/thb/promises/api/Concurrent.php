@@ -4,8 +4,7 @@ declare(strict_types=1);
 namespace config\plugin\thb\promises\api;
 
 use GuzzleHttp\Client;
-use GuzzleHttp\Promise\FulfilledPromise; // Guzzle 7 原生类
-use GuzzleHttp\Promise\Utils;
+use GuzzleHttp\Pool;
 use support\exception\BusinessException;
 use GuzzleHttp\Handler\CurlMultiHandler;
 use GuzzleHttp\Handler\CurlFactory;
@@ -54,14 +53,14 @@ class Concurrent
             $i++;
         }
         if($i > $asyncHttpNum * 100){
-            $i = 0;
+            $i = 1;
         }
         // 验证最大并发数（至少1个，最多不超过请求总数）
         $totalRequests = count($data);
         // 每次调用创建独立的 Client/Handler，避免长生命周期句柄积累
         $multiHandler = new CurlMultiHandler([
             // 限制内部可复用句柄上限，避免池无限增长
-            'handle_factory' => new CurlFactory(5),
+            'handle_factory' => new CurlFactory($asyncHttpNum),
             'select_timeout' => 0.05,
         ]);
         $handlerStack = HandlerStack::create($multiHandler);
@@ -70,79 +69,54 @@ class Concurrent
         ]);
 
         $responses = [];
+        $concurrency = min($totalRequests, $maxConcurrency);
 
-        // 1. 用 SplQueue 存储待执行的请求（键+配置），FIFO 顺序
-        $queue = new \SplQueue();
-        foreach ($data as $key => $config) {
-            $queue->enqueue([$key, $config]);
-        }
-
-        // 2. 递归执行函数：从队列取请求，执行后补下一个
-        $execute = function () use (
-            &$execute,  // 递归引用自身
-            &$queue,    // 待执行队列
-            $client,    // Guzzle客户端
-            &$responses // 存储结果
-        ) {
-            // 队列空了，返回已完成的Promise，终止递归
-            if ($queue->isEmpty()) {
-                return new FulfilledPromise(null);
+        // 使用 Guzzle Pool 管理并发请求
+        $requests = function () use ($data, $client) {
+            foreach ($data as $key => $config) {
+                yield $key => function () use ($client, $config) {
+                    $fromData = $config['data'] ?? [];
+                    $options = [
+                        'timeout' => $fromData['timeout'] ?? 15,
+                        'verify' => $fromData['verify'] ?? false,
+                        'json' => $fromData,
+                        // 短连接策略，降低长连接导致的粘连与内存占用
+                        'headers' => ['Connection' => 'close', 'Expect' => ''],
+                        'curl' => [
+                            \CURLOPT_FORBID_REUSE => true,
+                            \CURLOPT_FRESH_CONNECT => true,
+                            \CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4,
+                        ],
+                    ];
+                    return $client->requestAsync('POST', $config['url'], $options);
+                };
             }
-
-            // 取出队列头部的请求
-            [$key, $config] = $queue->dequeue();
-            $fromData = $config['data'] ?? [];
-
-            // 独立请求配置（避免变量污染，每次重新创建）
-            $requestOptions = [
-                'timeout' => $fromData['timeout'] ?? 15,
-                'verify' => $fromData['verify'] ?? false,
-                'json' => $fromData,
-                // 降低连接复用，避免长连接在高频场景中积累资源（如需性能可按需关闭）
-                'headers' => ['Connection' => 'close'],
-                'curl' => [
-                    \CURLOPT_FORBID_REUSE => true,
-                    \CURLOPT_FRESH_CONNECT => true,
-                ],
-            ];
-            // 发起异步GET请求
-            return $client->requestAsync('POST', $config['url'], $requestOptions)
-                ->then(
-                // 成功回调：解析响应（兼容JSON和非JSON）
-                    function ($response) use ($key, &$responses) {
-                        $body = $response->getBody()->getContents();
-                        $parsed = json_decode($body, true);
-                        $responses[$key] = $parsed !== null ? $parsed : $body;
-                    },
-                    // 失败回调：记录错误信息（方便排查）
-                    function ($exception) use ($key, &$responses) {
-                        $responses[$key] = [
-                            'error' => true,
-                            'message' => $exception->getMessage(),
-                            'code' => $exception->getCode(),
-                            'file' => $exception->getFile(),
-                            'line' => $exception->getLine(),
-                        ];
-                    }
-                )
-                // 关键：当前请求完成后，立即执行下一个请求（维持并发数）
-                ->then($execute);
         };
 
-        // 3. 初始化：启动 maxConcurrency 个并发请求（核心并发控制）
-        $runningPromises = [];
-        $maxConcurrency = min($totalRequests, $maxConcurrency);
-        for ($k = 0; $k < $maxConcurrency; $k++) {
-            $runningPromises[] = $execute();
-        }
+        $pool = new Pool($client, $requests(), [
+            'concurrency' => $concurrency,
+            'fulfilled' => function ($response, $key) use (&$responses) {
+                $body = $response->getBody()->getContents();
+                $parsed = json_decode($body, true);
+                $responses[$key] = $parsed !== null ? $parsed : $body;
+            },
+            'rejected' => function ($reason, $key) use (&$responses) {
+                $exception = $reason instanceof \Throwable ? $reason : new \RuntimeException((string)$reason);
+                $responses[$key] = [
+                    'error' => true,
+                    'message' => $exception->getMessage(),
+                    'code' => $exception->getCode(),
+                    'file' => $exception->getFile(),
+                    'line' => $exception->getLine(),
+                ];
+            },
+        ]);
 
-        // 4. 等待所有请求（包括递归补充的）全部完成
-        Utils::all($runningPromises)->wait();
+        // 等待所有请求完成
+        $pool->promise()->wait();
 
-        // 确保返回结果的键与输入顺序一致（可选，按原key排序）
-        ksort($responses);
         // 显式释放大对象，减少长期驻留内存
-        unset($queue, $runningPromises, $execute, $data);
+        unset($data, $requests, $pool);
         $client = null;
         $handlerStack = null;
         $multiHandler = null;
